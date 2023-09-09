@@ -1,55 +1,64 @@
-import { Hono } from 'hono/quick'
-import { z } from 'zod'
-import { zValidator } from '@hono/zod-validator'
+import { Hono } from "hono/quick";
+import { serveStatic } from "hono/cloudflare-workers";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
+import { drizzle } from "drizzle-orm/d1";
 
-import { Layout, AddTodo, Item } from './components'
+import { todo } from "./schema";
+import { Layout, AddTodo, Item } from "./components";
 
 type Bindings = {
-  DB: D1Database
-}
+  DB: D1Database;
+};
 
 type Todo = {
-  title: string
-  id: string
-}
+  title: string;
+  id: string;
+};
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Bindings }>();
 
-app.get('/', async (c) => {
-  const { results } = await c.env.DB.prepare(`SELECT id, title FROM todo;`).all<Todo>()
-  const todos = results as unknown as Todo[] // Currently, should fix a type mismatch.
+app.get("/tailwind.css", serveStatic({ path: "./tailwind.css" }));
+app.get("/csshmr.js", serveStatic({ path: "./csshmr.js" }));
+
+app.get("/", async (c) => {
+  const db = drizzle(c.env.DB);
+  const todos = await db.select().from(todo);
+
   return c.html(
     <Layout>
       <AddTodo />
       {todos.map((todo) => {
-        return <Item title={todo.title} id={todo.id} />
+        return <Item title={todo.title} id={todo.id.toString()} />;
       })}
       <div id="todo"></div>
     </Layout>
-  )
-})
+  );
+});
 
 app.post(
-  '/todo',
+  "/todo",
   zValidator(
-    'form',
+    "form",
     z.object({
-      title: z.string().min(1)
+      title: z.string().min(1),
     })
   ),
   async (c) => {
-    const { title } = c.req.valid('form')
-    const id = crypto.randomUUID()
-    await c.env.DB.prepare(`INSERT INTO todo(id, title) VALUES(?, ?);`).bind(id, title).run()
-    return c.html(<Item title={title} id={id} />)
+    const { title } = c.req.valid("form");
+    const id = crypto.randomUUID();
+    await c.env.DB.prepare(`INSERT INTO todo(title) VALUES(?);`)
+      .bind(title)
+      .run();
+    return c.html(<Item title={title} id={id} />);
   }
-)
+);
 
-app.delete('/todo/:id', async (c) => {
-  const id = c.req.param('id')
-  await c.env.DB.prepare(`DELETE FROM todo WHERE id = ?;`).bind(id).run()
-  c.status(200)
-  return c.body(null)
-})
+app.delete("/todo/:id", async (c) => {
+  const id = c.req.param("id");
+  await c.env.DB.prepare(`DELETE FROM todo WHERE id = ?;`).bind(id).run();
+  c.status(200);
+  return c.body(null);
+});
 
-export default app
+export default app;
